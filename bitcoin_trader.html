@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Scalp Trader BTC</title>
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 10px; background: #0e0e0e; color: #fff; }
+    h1 { text-align: center; color: #ff00ff; font-size: 1.3em; margin: 10px 0; }
+    .controls { display: flex; justify-content: center; gap: 6px; margin: 10px 0; flex-wrap: wrap; }
+    button { background: #1a1a1a; color: #fff; border: 1px solid #333; padding: 7px 10px; border-radius: 8px; font-size: 0.85em; }
+    button.active { background: #4d004d; border-color: #ff00ff; }
+    #chart { width: 100%; height: 380px; border-radius: 12px; margin-top: 10px; }
+    .info { margin: 15px 0; padding: 15px; background: #1a1a1a; border-radius: 12px; font-size: 0.9em; }
+    .signal { font-weight: bold; text-align: center; padding: 10px; border-radius: 8px; margin-bottom: 10px; }
+    .buy { background: #004d26; color: #00ff88; }
+    .sell { background: #4d0000; color: #ff4444; }
+    .none { background: #333; color: #ccc; }
+    .loading { color: #888; font-style: italic; }
+    p { margin: 5px 0; }
+    .last-update { font-size: 0.8em; color: #666; text-align: center; margin-top: 10px; }
+    #installBtn, #testNotifyBtn { display: none; background: #00ff88; color: #000; margin: 10px auto; width: 80%; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>SCALP BTC – EMA9/21 + RSI + VOLUME</h1>
+  <button id="installBtn">Adicionar à Tela Inicial (como App)</button>
+  <button id="testNotifyBtn">Testar Notificação</button>
+  <div class="controls">
+    <button data-tf="1m" class="active">1m</button>
+    <button data-tf="5m">5m</button>
+    <button data-tf="15m">15m</button>
+  </div>
+  <div id="chart"></div>
+  <div class="info" id="signalBox">
+    <div class="signal none">Carregando...</div>
+    <p><strong>Entrada:</strong> <span id="entry">-</span></p>
+    <p><strong>Stop Loss:</strong> <span id="stop">-</span></p>
+    <p><strong>Take Profit:</strong> <span id="take">-</span></p>
+    <p><strong>R/R:</strong> <span id="rr">-</span> | <strong>ATR:</strong> <span id="atr">-</span></p>
+    <p><strong>EMA9:</strong> <span id="ema9">-</span> | <strong>EMA21:</strong> <span id="ema21">-</span></p>
+    <p><strong>RSI:</strong> <span id="rsi">-</span> | <strong>Vol:</strong> <span id="vol">x</span></p>
+    <p class="last-update" id="lastUpdate"></p>
+  </div>
+
+  <script>
+    let chart, candlestickSeries, ema9Line, ema21Line;
+    let currentTF = '1m';
+    let markers = [], priceLines = [];
+    let deferredPrompt; // Para PWA install
+
+    // === BOTÃO PARA ADICIONAR À TELA INICIAL ===
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      document.getElementById('installBtn').style.display = 'block';
+    });
+
+    document.getElementById('installBtn').addEventListener('click', () => {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then((choiceResult) => {
+          if (choiceResult.outcome === 'accepted') {
+            console.log('Adicionado à tela inicial!');
+          }
+          deferredPrompt = null;
+        });
+      } else {
+        alert('No menu do Chrome, toque nos 3 pontinhos > "Adicionar à tela inicial".');
+      }
+    });
+
+    // === BOTÃO PARA TESTAR NOTIFICAÇÃO ===
+    document.getElementById('testNotifyBtn').style.display = 'block'; // Mostra o botão
+    document.getElementById('testNotifyBtn').addEventListener('click', async () => {
+      if ('Notification' in window) {
+        const permission = await Notification.requestPermission();
+        if (permission === 'granted') {
+          new Notification('🚨 TESTE DE SINAL!', {
+            body: 'COMPRA BTC a US$ 62850.00 | Stop: 62600 | Take: 63100',
+            icon: 'https://bitcoin.org/img/icons/opengraph.png',
+            vibrate: [200, 100, 200]
+          });
+          alert('Notificação enviada! Verifique a tela de bloqueio.');
+        } else {
+          alert('Permissão negada. Ative nas configurações do site no Chrome.');
+        }
+      } else {
+        alert('Seu navegador não suporta notificações.');
+      }
+    });
+
+    const tfButtons = document.querySelectorAll('.controls button');
+    tfButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        tfButtons.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentTF = btn.dataset.tf;
+        loadData();
+      });
+    });
+
+    function initChart() {
+      if (chart) chart.remove();
+      chart = LightweightCharts.createChart(document.getElementById('chart'), {
+        layout: { background: { color: '#0e0e0e' }, textColor: '#ddd' },
+        grid: { vertLines: { color: '#222' }, horzLines: { color: '#222' } },
+        width: document.getElementById('chart').clientWidth,
+        height: 380,
+        timeScale: { timeVisible: true, secondsVisible: false }
+      });
+
+      candlestickSeries = chart.addCandlestickSeries();
+      ema9Line = chart.addLineSeries({ color: '#ff00ff', lineWidth: 2 });
+      ema21Line = chart.addLineSeries({ color: '#00ffff', lineWidth: 2 });
+      markers = [];
+      priceLines = [];
+    }
+
+    function clearOldSignals() {
+      candlestickSeries.setMarkers([]);
+      try { candlestickSeries.priceLineRemoveAll?.(); } catch(e) {}
+      markers = [];
+      priceLines = [];
+    }
+
+    async function loadData() {
+      clearOldSignals();
+      document.querySelector('.signal').textContent = 'Carregando...';
+      document.querySelector('.signal').className = 'signal loading';
+
+      try {
+        const interval = currentTF;
+        const limit = 300;
+        const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`;
+        const response = await fetch(url);
+        const raw = await response.json();
+
+        const data = raw.map(d => ({
+          time: d[0] / 1000,
+          open: parseFloat(d[1]),
+          high: parseFloat(d[2]),
+          low: parseFloat(d[3]),
+          close: parseFloat(d[4]),
+          volume: parseFloat(d[5])
+        }));
+
+        // === CALCULAR EMA9, EMA21, RSI, ATR, VOLUME ===
+        const closes = data.map(d => d.close);
+        const volumes = data.map(d => d.volume);
+
+        const ema9 = ema(closes, 9);
+        const ema21 = ema(closes, 21);
+        const rsi = calculateRSI(closes, 14);
+        const atr = calculateATR(data, 14);
+        const avgVol = volumes.slice(-20).reduce((a,b) => a+b, 0) / 20;
+        const volSpike = data[data.length-1].volume > avgVol * 2;
+
+        const last = data[data.length - 1];
+        const prev = data[data.length - 2];
+
+        // === CONDIÇÕES DE SINAL ===
+        let direction = 'SEM SINAL';
+        let entry = null, stop = null, take = null;
+
+        const rsiValue = rsi[rsi.length - 1];
+        const prevEma9 = ema9[ema9.length - 2];
+        const prevEma21 = ema21[ema21.length - 2];
+
+        if (prevEma9 <= prevEma21 && ema9[ema9.length-1] > ema21[ema21.length-1] && 
+            rsiValue < 70 && volSpike) {
+          direction = 'COMPRA';
+          entry = last.close;
+          stop = entry - atr;
+          take = entry + 1.5 * atr; // 1:1.5
+        } 
+        else if (prevEma9 >= prevEma21 && ema9[ema9.length-1] < ema21[ema21.length-1] && 
+                 rsiValue > 30 && volSpike) {
+          direction = 'VENDA';
+          entry = last.close;
+          stop = entry + atr;
+          take = entry - 1.5 * atr;
+        }
+
+        // === GRÁFICO ===
+        candlestickSeries.setData(data);
+        ema9Line.setData(data.map((d, i) => ({ time: d.time, value: ema9[i] })));
+        ema21Line.setData(data.map((d, i) => ({ time: d.time, value: ema21[i] })));
+
+        if (direction !== 'SEM SINAL') {
+          const entryLine = candlestickSeries.createPriceLine({ price: entry, color: '#00ff00', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Entrada' });
+          const stopLine = candlestickSeries.createPriceLine({ price: stop, color: '#ff0000', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dotted, title: 'Stop' });
+          const takeLine = candlestickSeries.createPriceLine({ price: take, color: '#00ff00', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dotted, title: 'Take 1:1.5' });
+
+          candlestickSeries.setMarkers([{
+            time: last.time,
+            position: direction === 'COMPRA' ? 'belowBar' : 'aboveBar',
+            color: direction === 'COMPRA' ? '#00ff88' : '#ff4444',
+            shape: direction === 'COMPRA' ? 'arrowUp' : 'arrowDown',
+            text: direction
+          }]);
+        }
+
+        // === INFO ===
+        document.querySelector('.signal').textContent = direction;
+        document.querySelector('.signal').className = `signal ${direction === 'COMPRA' ? 'buy' : direction === 'VENDA' ? 'sell' : 'none'}`;
+
+        document.getElementById('entry').textContent = entry ? `US$ ${entry.toFixed(2)}` : '-';
+        document.getElementById('stop').textContent = stop ? `US$ ${stop.toFixed(2)}` : '-';
+        document.getElementById('take').textContent = take ? `US$ ${take.toFixed(2)}` : '-';
+        document.getElementById('rr').textContent = entry ? '1:1.5' : '-';
+        document.getElementById('atr').textContent = `US$ ${atr.toFixed(2)}`;
+        document.getElementById('ema9').textContent = `US$ ${ema9[ema9.length-1].toFixed(2)}`;
+        document.getElementById('ema21').textContent = `US$ ${ema21[ema21.length-1].toFixed(2)}`;
+        document.getElementById('rsi').textContent = rsiValue.toFixed(1);
+        document.getElementById('vol').textContent = volSpike ? '↑' : '—';
+        document.getElementById('lastUpdate').textContent = `Atualizado: ${new Date().toLocaleTimeString()}`;
+
+      } catch (err) {
+        document.querySelector('.signal').textContent = 'Erro';
+        console.error(err);
+      }
+    }
+
+    // === FUNÇÕES DE CÁLCULO ===
+    function ema(prices, period) {
+      const k = 2 / (period + 1);
+      const emaArray = [prices[0]];
+      for (let i = 1; i < prices.length; i++) {
+        emaArray.push(prices[i] * k + emaArray[i-1] * (1 - k));
+      }
+      return emaArray;
+    }
+
+    function calculateRSI(prices, period) {
+      const gains = [], losses = [];
+      for (let i = 1; i < prices.length; i++) {
+        const diff = prices[i] - prices[i-1];
+        gains.push(diff > 0 ? diff : 0);
+        losses.push(diff < 0 ? -diff : 0);
+      }
+      const avgGain = gains.slice(0, period).reduce((a,b) => a+b, 0) / period;
+      const avgLoss = losses.slice(0, period).reduce((a,b) => a+b, 0) / period;
+      const rsi = [50];
+      let currentGain = avgGain, currentLoss = avgLoss;
+      for (let i = period; i < prices.length; i++) {
+        currentGain = (currentGain * (period - 1) + gains[i-1]) / period;
+        currentLoss = (currentLoss * (period - 1) + losses[i-1]) / period;
+        const rs = currentLoss === 0 ? 100 : currentGain / currentLoss;
+        rsi.push(100 - (100 / (1 + rs)));
+      }
+      return rsi;
+    }
+
+    function calculateATR(data, period) {
+      let trSum = 0;
+      for (let i = 1; i <= period && i < data.length; i++) {
+        const high = data[i].high, low = data[i].low, prevClose = data[i-1].close;
+        trSum += Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+      }
+      return data.length >= period ? trSum / period : 100;
+    }
+
+    // === INICIAR ===
+    initChart();
+    loadData();
+    setInterval(loadData, 30000);
+
+    window.addEventListener('resize', () => {
+      if (chart) chart.applyOptions({ width: document.getElementById('chart').clientWidth });
+    });
+  </script>
+</body>
+</html>
