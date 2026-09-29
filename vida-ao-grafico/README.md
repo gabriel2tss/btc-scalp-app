@@ -11,8 +11,8 @@ Briefing completo: [`docs/briefing.pdf`](docs/briefing.pdf). Ele é a fonte da v
 
 | Fase | O quê | Status |
 |---|---|---|
-| 0 | Reconhecimento (disco, GPU, MT5, histórico da corretora) | **código pronto — rodar no PC** |
-| 1 | Coleta MT5 → Parquet+zstd por ativo/ano + manifesto | **código pronto — aguardando ativo** |
+| 0 | Reconhecimento (disco, GPU, histórico disponível) | código pronto |
+| 1 | Download de dados reais (Dukascopy / Binance) → Parquet+zstd + manifesto | **código pronto — aguardando liberação de rede** |
 | 2 | Estado rico por instante (features sem look-ahead) | — |
 | 3 | Alfabeto (VQ-VAE) | — |
 | 4 | Palavras (BPE) + modelo de linguagem | — |
@@ -23,12 +23,31 @@ Briefing completo: [`docs/briefing.pdf`](docs/briefing.pdf). Ele é a fonte da v
 
 ## Pendências (do Gabriel)
 
-- [ ] Rodar a Fase 0 no PC e mandar o relatório (`reports/phase0_recon_*.md`).
+- [ ] Liberar na rede do ambiente de nuvem: `datafeed.dukascopy.com` e `data.binance.vision`.
 - [ ] Escolher o primeiro ativo.
-- [ ] Confirmar o fuso do servidor da corretora (`config/project.yaml` → `server_time`).
 - [ ] Preencher `config/success_criteria.yaml` e travar (`python -m vag.criteria lock`) antes da Fase 6.
 
-## Como rodar (PC Windows com MT5)
+## Como rodar (nuvem)
+
+Tudo roda no ambiente de nuvem do Claude Code, com dados reais de fontes públicas:
+
+- **Dukascopy** (forex, ouro, índices): velas M1 com bid **e** ask (spread real por minuto) e
+  ticks com volume, desde ~2003, já em UTC.
+- **Binance** (cripto spot): velas 1m com volume comprador agressor e aggTrades (cada negócio,
+  com lado do agressor), conferidos pelo sha256 publicado pela Binance.
+
+```bash
+pip install -e ".[dev]"
+python -m vag.data.download --source dukascopy --symbol EURUSD  --kind m1     --start 2015-01
+python -m vag.data.download --source dukascopy --symbol EURUSD  --kind ticks  --start 2023-01
+python -m vag.data.download --source binance   --symbol BTCUSDT --kind m1     --start 2018-01
+python -m vag.data.download --source binance   --symbol BTCUSDT --kind trades --start 2024-01
+```
+
+O container da nuvem é efêmero: os dados (`data/`) não vão para o git e são baixados de novo
+quando necessário (o download é retomável e o manifesto registra tudo).
+
+## Alternativa: PC Windows com MT5
 
 ```powershell
 cd vida-ao-grafico

@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Dialeto do mercado descoberto a partir dos dados: alfabeto (VQ-VAE), palavras (BPE), modelo de linguagem e validação walk-forward."
 requires-python = ">=3.10"
 dependencies = [
+    "requests>=2.31",
     "numpy>=1.26",
     "pandas>=2.1",
     "pyarrow>=15",
