@@ -1,0 +1,25 @@
+# Critérios de sucesso — seção 8 do briefing.
+#
+# PREENCHER ANTES DA FASE 6 e ANTES de olhar qualquer resultado fora da amostra.
+# Depois de preenchido, travar com:
+#     python -m vag.criteria lock
+# Isso grava um hash (config/success_criteria.lock). A Fase 6 se recusa a rodar
+# se o arquivo tiver sido alterado depois do travamento.
+#
+# Se os critérios não forem atingidos, o projeto encerra ou pivota para
+# "filtro de clareza" — sem ajustar os critérios depois de ver os resultados.
+
+assets: []                          # ex.: [EURUSD]
+horizons_minutes: []                # ex.: [5, 15, 60]
+min_net_edge_per_trade: null        # vantagem mínima líquida de custos por operação (em pips ou % — dizer a unidade)
+min_net_edge_unit: null             # "pips" | "points" | "pct"
+min_hit_rate_oos: null              # taxa de acerto mínima fora da amostra (0-1), ou null
+min_profit_factor_oos: null         # profit factor mínimo fora da amostra, ou null
+min_walkforward_windows_passing: null   # em quantas janelas walk-forward a vantagem precisa aparecer
+total_walkforward_windows: null
+min_phrase_occurrences: null        # ocorrências mínimas de uma frase para ela contar
+fdr_q: 0.05                         # nível de Benjamini–Hochberg
+costs:
+  spread: broker_measured           # usar spread médio/máximo medido da corretora
+  slippage_points: null
+  commission_per_lot: null

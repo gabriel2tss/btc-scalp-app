@@ -1,0 +1,10 @@
+# Dados nunca vão para o git (ficam no disco local do Gabriel)
+/data/
+*.parquet
+*.csv
+/checkpoints/
+/runs/
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/

@@ -1,0 +1,41 @@
+# Configuração geral do projeto "Vida ao Gráfico".
+# Caminhos relativos são resolvidos a partir da raiz do projeto (pasta vida-ao-grafico/).
+
+data_dir: data                # Parquet particionado por ativo/ano (fora do git)
+reports_dir: reports
+
+seed: 42
+
+disk:
+  # O briefing pede folga para modelos/checkpoints. A coleta para se o espaço
+  # livre cair abaixo disso.
+  min_free_gb: 3.0
+
+storage:
+  compression: zstd
+  compression_level: 9
+
+# Como converter o horário do servidor MT5 para UTC.
+# O pacote MetaTrader5 devolve timestamps no horário do SERVIDOR da corretora,
+# não em UTC. A Fase 0 estima o offset; confirme aqui antes da Fase 1.
+#   mode: ny_close  -> servidor = Nova York + 7h (UTC+2 inverno / UTC+3 verão; padrão da maioria das corretoras de forex)
+#   mode: fixed     -> offset fixo em horas (use fixed_offset_hours)
+#   mode: utc       -> servidor já está em UTC
+server_time:
+  mode: ny_close
+  fixed_offset_hours: 0
+
+# Ativos candidatos para o reconhecimento da Fase 0 (nomes como aparecem na corretora).
+# O ativo inicial ainda NÃO foi escolhido — ver pendências no README.
+recon_candidates:
+  - EURUSD
+  - GBPUSD
+  - USDJPY
+  - XAUUSD
+  - US500
+  - BTCUSD
+
+# Detecção de lacunas
+gaps:
+  m1_min_gap_minutes: 2        # lacuna = intervalo entre barras M1 maior que isso
+  ticks_min_gap_minutes: 5
