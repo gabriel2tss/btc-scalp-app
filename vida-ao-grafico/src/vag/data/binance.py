@@ -1,4 +1,4 @@
-"""Fonte Binance (cripto spot): velas 1m e aggTrades, do repositório público data.binance.vision.
+"""Fonte Binance (cripto spot e futuros USDT-M): velas 1m e aggTrades, do repositório público data.binance.vision.
 
 Meses fechados vêm do arquivo mensal; o mês corrente, dos arquivos diários.
 Todo arquivo é conferido contra o .CHECKSUM (sha256) publicado pela Binance.
@@ -22,7 +22,10 @@ import pyarrow.parquet as pq
 
 from .http import NotFound, get
 
-BASE = "https://data.binance.vision/data/spot"
+BASES = {
+    "spot": "https://data.binance.vision/data/spot",
+    "um": "https://data.binance.vision/data/futures/um",   # futuros perpétuos USDT-M (desde 2019-09 p/ BTC)
+}
 
 KLINE_COLS = ["open_time", "open", "high", "low", "close", "volume", "close_time", "quote_volume",
               "trades", "taker_buy_volume", "taker_buy_quote_volume", "ignore"]
@@ -54,15 +57,16 @@ def _download_verified(url: str, dest_dir: str) -> str | None:
     return path
 
 
-def _urls(kind: str, symbol: str, year: int, month: int, now: pd.Timestamp) -> list[str]:
+def _urls(kind: str, symbol: str, year: int, month: int, now: pd.Timestamp, market: str = "spot") -> list[str]:
+    base = BASES[market]
     m_start = pd.Timestamp(year=year, month=month, day=1, tz="UTC")
     m_end = m_start + pd.offsets.MonthBegin(1)
     sub = f"klines/{symbol}/1m" if kind == "m1" else f"aggTrades/{symbol}"
     name = f"{symbol}-1m" if kind == "m1" else f"{symbol}-aggTrades"
     if m_end <= now.floor("D"):
-        return [f"{BASE}/monthly/{sub}/{name}-{year:04d}-{month:02d}.zip"]
+        return [f"{base}/monthly/{sub}/{name}-{year:04d}-{month:02d}.zip"]
     days = pd.date_range(m_start, now.floor("D"), freq="D", inclusive="left")
-    return [f"{BASE}/daily/{sub}/{name}-{d:%Y-%m-%d}.zip" for d in days]
+    return [f"{base}/daily/{sub}/{name}-{d:%Y-%m-%d}.zip" for d in days]
 
 
 def _read_csv_from_zip(path: str, names: list[str]) -> pa.Table:
@@ -74,8 +78,8 @@ def _read_csv_from_zip(path: str, names: list[str]) -> pa.Table:
     return pacsv.read_csv(io.BytesIO(data), read_options=pacsv.ReadOptions(column_names=names, skip_rows=skip))
 
 
-def fetch_m1_month(symbol: str, year: int, month: int, now: pd.Timestamp) -> tuple[pd.DataFrame, dict]:
-    urls = _urls("m1", symbol, year, month, now)
+def fetch_m1_month(symbol: str, year: int, month: int, now: pd.Timestamp, market: str = "spot") -> tuple[pd.DataFrame, dict]:
+    urls = _urls("m1", symbol, year, month, now, market)
     frames, missing = [], 0
     with tempfile.TemporaryDirectory() as tmp:
         for u in urls:
@@ -102,9 +106,9 @@ def fetch_m1_month(symbol: str, year: int, month: int, now: pd.Timestamp) -> tup
 
 
 def fetch_trades_month_to_parquet(symbol: str, year: int, month: int, now: pd.Timestamp,
-                                  out_path, compression="zstd", level=9) -> dict:
+                                  out_path, compression="zstd", level=9, market: str = "spot") -> dict:
     """aggTrades do mês direto para Parquet, arquivo por arquivo (não cabe tudo em memória)."""
-    urls = _urls("trades", symbol, year, month, now)
+    urls = _urls("trades", symbol, year, month, now, market)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_out = tempfile.mkstemp(dir=out_path.parent, suffix=".tmp")
     os.close(fd)

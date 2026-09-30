@@ -4,8 +4,9 @@ Forex / metais / índices (Dukascopy, horários em UTC):
     python -m vag.data.download --source dukascopy --symbol EURUSD --kind m1    --start 2015-01
     python -m vag.data.download --source dukascopy --symbol EURUSD --kind ticks --start 2023-01
 
-Cripto (Binance spot):
-    python -m vag.data.download --source binance --symbol BTCUSDT --kind m1     --start 2018-01
+Cripto (Binance spot / futuros perpétuos USDT-M):
+    python -m vag.data.download --source binance    --symbol BTCUSDT --kind m1 --start 2017-08
+    python -m vag.data.download --source binance-um --symbol BTCUSDT --kind m1 --start 2019-09
     python -m vag.data.download --source binance --symbol BTCUSDT --kind trades --start 2024-01
 """
 
@@ -23,30 +24,38 @@ from .collect import free_gb, iter_months
 from .quality import find_gaps, summarize_gaps
 from .storage import Manifest, month_path, write_month
 
-KINDS = {"dukascopy": ("m1", "ticks"), "binance": ("m1", "trades")}
+KINDS = {"dukascopy": ("m1", "ticks"), "binance": ("m1", "trades"), "binance-um": ("m1", "trades")}
+
+
+def storage_symbol(source: str, symbol: str) -> str:
+    """Futuros ficam em pasta separada do spot: BTCUSDT (spot) x BTCUSDT_UM (perpétuo)."""
+    return f"{symbol}_UM" if source == "binance-um" else symbol
 
 
 def download_month(cfg: dict, manifest: Manifest, source: str, kind: str, symbol: str,
                    year: int, month: int, now: pd.Timestamp, force: bool = False) -> dict | None:
+    market = "um" if source == "binance-um" else "spot"
+    sym_out = storage_symbol(source, symbol)
     m_end = pd.Timestamp(year=year, month=month, day=1, tz="UTC") + pd.offsets.MonthBegin(1)
     complete = m_end <= now.floor("D")
-    path = month_path(cfg["data_dir"], kind, symbol, year, month)
-    prev = manifest.get(kind, symbol, year, month)
+    path = month_path(cfg["data_dir"], kind, sym_out, year, month)
+    prev = manifest.get(kind, sym_out, year, month)
     if prev and prev.get("complete") and (path.exists() or prev.get("rows") == 0) and not force:
         return None
 
     comp, lvl = cfg["storage"]["compression"], cfg["storage"]["compression_level"]
     min_gap = pd.Timedelta(minutes=cfg["gaps"]["m1_min_gap_minutes" if kind == "m1" else "ticks_min_gap_minutes"])
 
-    if source == "binance" and kind == "trades":
-        meta = binance.fetch_trades_month_to_parquet(symbol, year, month, now, path, comp, lvl)
+    if source.startswith("binance") and kind == "trades":
+        meta = binance.fetch_trades_month_to_parquet(symbol, year, month, now, path, comp, lvl, market)
         entry = {"source": source, "complete": complete, **meta}
-        manifest.put(kind, symbol, year, month, entry)
+        manifest.put(kind, sym_out, year, month, entry)
         return entry
 
-    mod = dukascopy if source == "dukascopy" else binance
-    if kind == "m1":
-        df, meta = mod.fetch_m1_month(symbol, year, month, now)
+    if kind == "m1" and source.startswith("binance"):
+        df, meta = binance.fetch_m1_month(symbol, year, month, now, market)
+    elif kind == "m1":
+        df, meta = dukascopy.fetch_m1_month(symbol, year, month, now)
     else:
         df, meta = dukascopy.fetch_ticks_month(symbol, year, month, now)
 
@@ -57,7 +66,7 @@ def download_month(cfg: dict, manifest: Manifest, source: str, kind: str, symbol
         entry["gaps"] = summarize_gaps(find_gaps(df["time"], min_gap))
         if source == "dukascopy":
             entry["sanity"] = dukascopy.sanity_check(df)
-    manifest.put(kind, symbol, year, month, entry)
+    manifest.put(kind, sym_out, year, month, entry)
     return entry
 
 
