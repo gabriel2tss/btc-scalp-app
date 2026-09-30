@@ -30,6 +30,8 @@ BASES = {
 KLINE_COLS = ["open_time", "open", "high", "low", "close", "volume", "close_time", "quote_volume",
               "trades", "taker_buy_volume", "taker_buy_quote_volume", "ignore"]
 AGG_COLS = ["agg_id", "price", "qty", "first_id", "last_id", "time", "is_buyer_maker", "best_match"]
+AGG_TYPES = {"agg_id": pa.int64(), "price": pa.float64(), "qty": pa.float64(), "first_id": pa.int64(),
+             "last_id": pa.int64(), "time": pa.int64(), "is_buyer_maker": pa.bool_(), "best_match": pa.bool_()}
 
 
 def _to_utc(ts: pd.Series | np.ndarray) -> pd.Series:
@@ -57,15 +59,16 @@ def _download_verified(url: str, dest_dir: str) -> str | None:
     return path
 
 
-def _urls(kind: str, symbol: str, year: int, month: int, now: pd.Timestamp, market: str = "spot") -> list[str]:
+def _urls(kind: str, symbol: str, year: int, month: int, now: pd.Timestamp, market: str = "spot",
+          daily: bool = False) -> list[str]:
     base = BASES[market]
     m_start = pd.Timestamp(year=year, month=month, day=1, tz="UTC")
     m_end = m_start + pd.offsets.MonthBegin(1)
     sub = f"klines/{symbol}/1m" if kind == "m1" else f"aggTrades/{symbol}"
     name = f"{symbol}-1m" if kind == "m1" else f"{symbol}-aggTrades"
-    if m_end <= now.floor("D"):
+    if m_end <= now.floor("D") and not daily:
         return [f"{base}/monthly/{sub}/{name}-{year:04d}-{month:02d}.zip"]
-    days = pd.date_range(m_start, now.floor("D"), freq="D", inclusive="left")
+    days = pd.date_range(m_start, min(m_end, now.floor("D")), freq="D", inclusive="left")
     return [f"{base}/daily/{sub}/{name}-{d:%Y-%m-%d}.zip" for d in days]
 
 
@@ -76,6 +79,23 @@ def _read_csv_from_zip(path: str, names: list[str]) -> pa.Table:
     first = data.split(b"\n", 1)[0]
     skip = 1 if first[:1].isalpha() else 0
     return pacsv.read_csv(io.BytesIO(data), read_options=pacsv.ReadOptions(column_names=names, skip_rows=skip))
+
+
+def _iter_csv_batches_from_zip(path: str, names: list[str], types: dict, block_size: int = 64 << 20):
+    """Lê o CSV de dentro do zip em blocos: um mês de aggTrades descompactado passa de 5 GB.
+
+    Os futuros USDT-M trazem 7 colunas (sem best_match); o spot, 8. Cabeçalho opcional.
+    """
+    with zipfile.ZipFile(path) as z:
+        name = z.namelist()[0]
+        with z.open(name) as fh:
+            first = fh.readline()
+        skip = 1 if first[:1].isalpha() else 0
+        cols = names[: first.count(b",") + 1]
+        opts = pacsv.ReadOptions(column_names=cols, skip_rows=skip, block_size=block_size)
+        conv = pacsv.ConvertOptions(column_types={c: types[c] for c in cols})
+        with z.open(name) as fh:
+            yield from pacsv.open_csv(fh, read_options=opts, convert_options=conv)
 
 
 def fetch_m1_month(symbol: str, year: int, month: int, now: pd.Timestamp, market: str = "spot") -> tuple[pd.DataFrame, dict]:
@@ -106,9 +126,13 @@ def fetch_m1_month(symbol: str, year: int, month: int, now: pd.Timestamp, market
 
 
 def fetch_trades_month_to_parquet(symbol: str, year: int, month: int, now: pd.Timestamp,
-                                  out_path, compression="zstd", level=9, market: str = "spot") -> dict:
-    """aggTrades do mês direto para Parquet, arquivo por arquivo (não cabe tudo em memória)."""
-    urls = _urls("trades", symbol, year, month, now, market)
+                                  out_path, compression="zstd", level=9, market: str = "spot", daily: bool = False) -> dict:
+    """aggTrades do mês direto para Parquet, arquivo por arquivo (não cabe tudo em memória).
+
+    daily=True usa os arquivos diários mesmo para meses fechados: alguns mensais de aggTrades
+    dos futuros vêm cortados em 20.000.000 de linhas, com dias inteiros faltando (ex.: 2020-04).
+    """
+    urls = _urls("trades", symbol, year, month, now, market, daily)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_out = tempfile.mkstemp(dir=out_path.parent, suffix=".tmp")
     os.close(fd)
@@ -120,26 +144,31 @@ def fetch_trades_month_to_parquet(symbol: str, year: int, month: int, now: pd.Ti
                 if p is None:
                     missing += 1
                     continue
-                t = _read_csv_from_zip(p, AGG_COLS)
+                for t in _iter_csv_batches_from_zip(p, AGG_COLS, AGG_TYPES):
+                    if t.num_rows == 0:
+                        continue
+                    ts = _to_utc(t.column("time").to_numpy())
+                    table = pa.table({
+                        "time": pa.array(ts),
+                        "price": t.column("price"),
+                        "qty": t.column("qty"),
+                        "is_buyer_maker": t.column("is_buyer_maker"),
+                        "n_trades": pc.add(pc.subtract(t.column("last_id"), t.column("first_id")), 1).cast(pa.int32()),
+                    })
+                    if writer is None:
+                        writer = pq.ParquetWriter(tmp_out, table.schema, compression=compression, compression_level=level)
+                    writer.write_table(table)
+                    rows += table.num_rows
+                    first = first if first is not None else ts[0]
+                    last = ts[-1]
                 os.remove(p)
-                ts = _to_utc(t.column("time").to_numpy())
-                table = pa.table({
-                    "time": pa.array(ts),
-                    "price": t.column("price").cast(pa.float64()),
-                    "qty": t.column("qty").cast(pa.float64()),
-                    "is_buyer_maker": t.column("is_buyer_maker").cast(pa.bool_()),
-                    "n_trades": pc.add(pc.subtract(t.column("last_id"), t.column("first_id")), 1).cast(pa.int32()),
-                })
-                if writer is None:
-                    writer = pq.ParquetWriter(tmp_out, table.schema, compression=compression, compression_level=level)
-                writer.write_table(table)
-                rows += table.num_rows
-                first = first if first is not None else ts[0]
-                last = ts[-1]
         if writer is not None:
             writer.close()
+            writer = None
             os.replace(tmp_out, out_path)
     finally:
+        if writer is not None:   # no Windows, arquivo aberto não pode ser apagado
+            writer.close()
         if os.path.exists(tmp_out):
             os.remove(tmp_out)
     return {"files": len(urls), "files_missing": missing, "rows": rows,

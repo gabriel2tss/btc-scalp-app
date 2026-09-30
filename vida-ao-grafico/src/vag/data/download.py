@@ -33,7 +33,7 @@ def storage_symbol(source: str, symbol: str) -> str:
 
 
 def download_month(cfg: dict, manifest: Manifest, source: str, kind: str, symbol: str,
-                   year: int, month: int, now: pd.Timestamp, force: bool = False) -> dict | None:
+                   year: int, month: int, now: pd.Timestamp, force: bool = False, daily: bool = False) -> dict | None:
     market = "um" if source == "binance-um" else "spot"
     sym_out = storage_symbol(source, symbol)
     m_end = pd.Timestamp(year=year, month=month, day=1, tz="UTC") + pd.offsets.MonthBegin(1)
@@ -47,8 +47,8 @@ def download_month(cfg: dict, manifest: Manifest, source: str, kind: str, symbol
     min_gap = pd.Timedelta(minutes=cfg["gaps"]["m1_min_gap_minutes" if kind == "m1" else "ticks_min_gap_minutes"])
 
     if source.startswith("binance") and kind == "trades":
-        meta = binance.fetch_trades_month_to_parquet(symbol, year, month, now, path, comp, lvl, market)
-        entry = {"source": source, "complete": complete, **meta}
+        meta = binance.fetch_trades_month_to_parquet(symbol, year, month, now, path, comp, lvl, market, daily)
+        entry = {"source": source, "complete": complete, "daily_files": daily, **meta}
         manifest.put(kind, sym_out, year, month, entry)
         return entry
 
@@ -78,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--start", required=True, help="AAAA-MM")
     ap.add_argument("--end", default=datetime.now(timezone.utc).strftime("%Y-%m"), help="AAAA-MM (inclusive)")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--daily", action="store_true",
+                    help="aggTrades: baixar pelos arquivos diários (alguns mensais da Binance vêm cortados)")
     args = ap.parse_args(argv)
     if args.kind not in KINDS[args.source]:
         ap.error(f"--kind para {args.source}: {KINDS[args.source]}")
@@ -90,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         if free < cfg["disk"]["min_free_gb"]:
             print(f"Parando: só {free:.1f} GB livres (mínimo {cfg['disk']['min_free_gb']} GB).", file=sys.stderr)
             return 3
-        e = download_month(cfg, manifest, args.source, args.kind, args.symbol, y, m, now, args.force)
+        e = download_month(cfg, manifest, args.source, args.kind, args.symbol, y, m, now, args.force, args.daily)
         if e is None:
             print(f"  = {y}-{m:02d} já existe", flush=True)
             continue
