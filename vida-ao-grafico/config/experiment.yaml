@@ -57,7 +57,7 @@ lm:                           # mini-GPT sobre as letras (1 token por minuto)
   dropout: 0.1
   batch_size: 32
   lr: 0.0006
-  max_steps: 6000
+  max_steps: 4000              # ~30-40 min por janela na GTX 1650 (estimativa)
   eval_every: 250
   patience_evals: 6
   amp: true                   # fp16 na GPU (GTX 1650 suporta)

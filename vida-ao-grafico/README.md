@@ -65,7 +65,28 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_windows.ps1
 A coleta é mês a mês, retomável (meses completos já baixados são pulados), grava direto em
 Parquet+zstd (nunca CSV) e **para sozinha** se o disco livre cair abaixo de `disk.min_free_gb`.
 
+## Rodada walk-forward (Fases 2–6)
+
+```powershell
+.\.venv\Scripts\python -m vag.data.download --source binance-um --symbol BTCUSDT --kind m1 --start 2019-09
+.\.venv\Scripts\python -m vag.walkforward --smoke     # teste rápido de ponta a ponta
+.\.venv\Scripts\python -m vag.walkforward             # rodada completa (retomável)
+```
+
+Resultados em `runs/<run_name>/report.md` (atualizado a cada janela concluída) e `log.txt`.
+Parâmetros em `config/experiment.yaml`. Em cada janela: treino → validação (onde os dados escolhem
+horizonte, ocorrências mínimas, FDR, limiares) → teste (visto uma única vez). Comparação obrigatória
+com acaso, momentum/reversão, GBM nas features cruas e GBM com o dialeto.
+
 ## Decisões de implementação
+
+- **LM sobre letras, dicionário sobre palavras.** A segmentação BPE clássica olha letras futuras para
+  decidir onde uma palavra termina; aqui a palavra em t é a maior que *termina* em t (só passado).
+  O mini-GPT lê letras (1 por minuto), o que mantém tudo causal e alinhado ao relógio.
+- **Features só com janelas finitas** (sem EWM): calcular sobre as últimas `LOOKBACK` velas dá
+  exatamente o mesmo que sobre o histórico todo — o código do backtest é o código ao vivo.
+- **Operação executável:** decide no fechamento de t, entra na abertura de t+1, sai no fechamento de
+  t+h, uma posição por vez; custos taker (0,05%+0,01% por lado) e cenário maker.
 
 - **Fuso horário.** O pacote `MetaTrader5` devolve horários no relógio do *servidor* da
   corretora, não em UTC. Tudo é convertido para UTC na entrada. O padrão `ny_close`

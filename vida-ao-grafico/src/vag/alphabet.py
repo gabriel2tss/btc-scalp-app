@@ -43,13 +43,14 @@ class EMAQuantizer(nn.Module):
                 total = self.cluster_size.sum()
                 size = (self.cluster_size + self.eps) / (total + self.k * self.eps) * total
                 self.embed.copy_(self.embed_sum / size[:, None])
-                self.usage.mul_(0.99).add_(n, alpha=0.01)
+                self.usage.mul_(0.9).add_(n / n.sum() * self.k, alpha=0.1)   # 1.0 = uso médio
         commit = F.mse_loss(z, q.detach())
         q = z + (q - z).detach()   # straight-through
         return q, idx, commit
 
     @torch.no_grad()
-    def restart_dead(self, z: torch.Tensor, threshold: float = 1e-3) -> int:
+    def restart_dead(self, z: torch.Tensor, threshold: float = 0.03) -> int:
+        """Reinicia letras usadas menos de `threshold` x o uso médio, com estados reais do lote."""
         dead = (self.usage < threshold).nonzero().flatten()
         if len(dead) == 0:
             return 0
