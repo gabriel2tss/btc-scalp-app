@@ -1,25 +1,42 @@
 # Critérios de sucesso — seção 8 do briefing.
 #
-# PREENCHER ANTES DA FASE 6 e ANTES de olhar qualquer resultado fora da amostra.
-# Depois de preenchido, travar com:
-#     python -m vag.criteria lock
-# Isso grava um hash (config/success_criteria.lock). A Fase 6 se recusa a rodar
-# se o arquivo tiver sido alterado depois do travamento.
+# Preenchidos em 30/09/2026 com o Gabriel, ANTES de rodar o modelo de barreiras (triplo limite)
+# e antes de ver qualquer resultado dele. Travados com `python -m vag.criteria lock`.
+# Se os critérios não forem atingidos, esta linha encerra ou pivota — sem ajustar os critérios depois.
 #
-# Se os critérios não forem atingidos, o projeto encerra ou pivota para
-# "filtro de clareza" — sem ajustar os critérios depois de ver os resultados.
+# Estratégia avaliada: GBM treinado para o resultado das barreiras (take/stop proporcionais à
+# volatilidade, horizonte máximo 1 h ou 4 h, escolhidos só na validação), com semáforo de validação,
+# execução realista com ordens limitadas simulada negócio a negócio (ticks) e funding real.
+# Duas variantes julgadas separadamente: só números e números + dialeto.
 
-assets: []                          # ex.: [EURUSD]
-horizons_minutes: []                # ex.: [5, 15, 60]
-min_net_edge_per_trade: null        # vantagem mínima líquida de custos por operação (em pips ou % — dizer a unidade)
-min_net_edge_unit: null             # "pips" | "points" | "pct"
-min_hit_rate_oos: null              # taxa de acerto mínima fora da amostra (0-1), ou null
-min_profit_factor_oos: null         # profit factor mínimo fora da amostra, ou null
-min_walkforward_windows_passing: null   # em quantas janelas walk-forward a vantagem precisa aparecer
-total_walkforward_windows: null
-min_phrase_occurrences: null        # ocorrências mínimas de uma frase para ela contar
-fdr_q: 0.05                         # nível de Benjamini–Hochberg
+assets: [BTCUSDT_UM]                 # futuro perpétuo USDT-M da Binance
+horizons_minutes: [60, 240]          # tempo máximo de cada operação (barreira de tempo)
+min_net_edge_per_trade: 0.10         # média líquida por operação, custos realistas, todas as operações de teste juntas
+min_net_edge_unit: pct
+min_hit_rate_oos: null
+min_profit_factor_oos: 1.20          # todas as operações de teste juntas
+min_walkforward_windows_passing: 7   # janela "passa" = operou e terminou com média líquida > 0 e PF >= 1,0
+total_walkforward_windows: 11
+min_phrase_occurrences: 300          # frases do dicionário (variante com dialeto)
+fdr_q: 0.05
+min_pooled_t_stat: 2.0               # todas as operações de teste juntas
+cost_stress:
+  multiplier: 1.5                    # taxas, derrapagem e funding x1,5
+  min_net_edge_per_trade: 0.05       # ainda >= 0,05% por operação
 costs:
-  spread: broker_measured           # usar spread médio/máximo medido da corretora
+  spread: ticks_measured             # execução simulada negócio a negócio com os ticks da Binance
+  maker_fee_pct: 0.02
+  taker_fee_pct: 0.05
+  slippage_pct: 0.01                 # ordens a mercado: stop, saída por tempo, entrada que cruza o livro
+  funding: binance_historical
   slippage_points: null
   commission_per_lot: null
+evaluation:
+  execution: >-
+    entrada limitada 1 tick melhor que o último preço por até 1 min (executa só se um negócio real passar do
+    preço; se executar no 1º segundo, paga taxa taker); take = ordem limitada; stop e saída por tempo = a mercado
+  barreiras: >-
+    take = a x volatilidade esperada no horizonte (a em 1, 1,5, 2), mínimo de 3x os custos; take:stop 1:1 ou 2:1;
+    horizonte 60 ou 240 min; toque simultâneo no mesmo minuto conta como stop
+  semaforo: opera a janela só se, na validação, média líquida >= +5 bps e PF >= 1,15
+  veredito: cada variante passa só se TODOS os critérios acima forem atingidos
