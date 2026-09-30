@@ -1,0 +1,29 @@
+# Critérios de sucesso do OURO (XAUUSD, RoboForex conta cent), modelo de barreiras.
+#
+# Preenchidos em 30/09/2026 com o Gabriel, ANTES de rodar as barreiras no ouro e antes de ver qualquer
+# resultado delas. Proporcionais ao ouro (move ~10 bps/h contra 20-58 no BTC). Não se alteram depois.
+# Se não passar: encerrar ou mudar de abordagem, sem afrouxar os critérios.
+
+assets: [XAUUSD_RF]
+horizons_minutes: [60, 240]
+min_net_edge_per_trade: 0.03         # média líquida por operação (spread real + derrapagem), todas as operações de teste
+min_net_edge_unit: pct
+min_hit_rate_oos: null
+min_profit_factor_oos: 1.20
+min_walkforward_windows_passing: 5   # janela "passa" = operou e terminou com média líquida > 0 e PF >= 1,0
+total_walkforward_windows: 7         # 2023/1 a 2026 (jan-set), treino expandindo desde 2022-01
+min_phrase_occurrences: 300
+fdr_q: 0.05
+min_pooled_t_stat: 2.0
+cost_stress:
+  multiplier: 3                      # spread + derrapagem x3
+  min_net_edge_per_trade: 0.01       # ainda >= 0,01% por operação
+costs:
+  spread: mt5_measured               # spread do minuto de entrada, registrado pela corretora
+  slippage_bps: 0.2
+  commission: none                   # conta cent sem comissão
+evaluation:
+  barreiras: take = a x volatilidade esperada (a em 1, 1,5, 2), mínimo 1,5 bps; take:stop 1:1 ou 2:1; horizonte 60 ou 240 min
+  semaforo: opera a janela só se, na validação, média líquida >= +1,5 bps e PF >= 1,15
+  variantes: [so_numeros, numeros_dialeto]
+  veredito: cada variante passa só se TODOS os critérios acima forem atingidos
