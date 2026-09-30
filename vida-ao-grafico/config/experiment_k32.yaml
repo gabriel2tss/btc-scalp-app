@@ -1,0 +1,73 @@
+# Experimento principal: BTCUSDT, velas de 1 minuto da Binance.
+# Tudo que influencia o resultado mora aqui (versionado no git).
+
+run_name: btc_m1_v1_k32        # hipótese: alfabeto menor força padrões (palavras)
+seed: 42
+
+data:
+  source: binance-um          # binance (spot) | binance-um (futuro perpétuo) — mesmo instrumento que será operado
+  symbol: BTCUSDT
+  start: "2019-09"            # futuro perpétuo BTCUSDT existe desde 2019-09 na Binance
+
+# Janelas walk-forward: treino EXPANDINDO desde o início, teste = um bloco à frente.
+walkforward:
+  test_blocks:                # [início, fim) em UTC
+    - ["2021-01-01", "2021-07-01"]
+    - ["2021-07-01", "2022-01-01"]
+    - ["2022-01-01", "2022-07-01"]
+    - ["2022-07-01", "2023-01-01"]
+    - ["2023-01-01", "2023-07-01"]
+    - ["2023-07-01", "2024-01-01"]
+    - ["2024-01-01", "2024-07-01"]
+    - ["2024-07-01", "2025-01-01"]
+    - ["2025-01-01", "2025-07-01"]
+    - ["2025-07-01", "2026-01-01"]
+    - ["2026-01-01", "2026-09-01"]
+  embargo_minutes: 1440       # folga entre fim do treino e início do teste (> maior horizonte + contexto)
+  val_fraction: 0.1           # fatia final do treino (cronológica) para early stopping
+
+horizons_minutes: [5, 15, 60]
+
+# Custos por LADO (fração do preço). Futuro Binance: taxa taker 0,05% + slippage estimado.
+costs:
+  fee_per_side: 0.0005
+  slippage_per_side: 0.0001
+
+alphabet:                     # VQ-VAE
+  codebook_size: 32
+  latent_dim: 16
+  hidden: 128
+  commitment: 0.25
+  ema_decay: 0.99
+  batch_size: 4096
+  epochs: 8
+  lr: 0.002
+  dead_code_restart_every: 200   # passos; letras sem uso são reiniciadas
+
+words:                        # BPE sobre as letras
+  merges: 1000
+  max_word_len: 12
+  min_pair_count: 50
+
+lm:                           # mini-GPT sobre as letras (1 token por minuto)
+  context: 512
+  n_layer: 6
+  n_head: 8
+  d_model: 256
+  dropout: 0.1
+  batch_size: 32
+  lr: 0.0006
+  max_steps: 3000              # medido na GTX 1650 (fp32): 1,94 passos/s -> ~27 min por janela; 11 janelas cabem numa madrugada
+  eval_every: 250
+  patience_evals: 6
+  amp: false                  # GTX 1650 (TU117): matmul fp16 medido 5x MAIS LENTO que fp32 (0,34 x 1,67 TFLOP/s); LM 0,56 -> 1,94 passos/s
+
+dictionary:
+  max_phrase_words: 3
+  min_train_count: 300
+  min_test_count: 50
+  fdr_q: 0.05
+
+baselines:
+  gbm_max_iter: 300
+  gbm_learning_rate: 0.05

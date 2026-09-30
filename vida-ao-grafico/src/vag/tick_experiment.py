@@ -8,6 +8,7 @@ diferença é que cada minuto ganha as features de microestrutura dos ticks
 - momentum_reversao só usa a vela: deve dar igual nas duas (checagem de que a comparação é justa)
 
     python -m vag.tick_experiment                                          # janela 0, config completa
+    python -m vag.tick_experiment --windows 3 7                            # várias janelas (ticks até a última)
     python -m vag.tick_experiment --smoke --block 2020-03-15 2020-04-01 --device cpu
 """
 
@@ -34,7 +35,7 @@ from .walkforward import SMOKE, Logger, _merge, run_window, write_report
 
 
 def load_timeline_ticks(cfg: dict, exp: dict, block, run_dir: Path, log) -> dict:
-    cache = run_dir / "timeline.parquet"
+    cache = run_dir / f"timeline_ate_{block[1]}.parquet"   # serve para qualquer janela que termine até aqui
     cols = FEATURES + TICK_FEATURES
     horizons = exp["horizons_minutes"]
     if cache.exists():
@@ -109,7 +110,7 @@ def _f(x, nd=1):
     return "—" if x is None else f"{x:.{nd}f}"
 
 
-def write_comparison(res: dict, base_path: Path, run_dir: Path) -> Path:
+def write_comparison(res: dict, base_path: Path, run_dir: Path, wi: int) -> Path:
     L = ["# Tick a tick x só velas — mesma janela, mesma configuração", ""]
     if not base_path.exists():
         L.append(f"(sem resultado da rodada só com velas em `{base_path}` para comparar)")
@@ -136,7 +137,7 @@ def write_comparison(res: dict, base_path: Path, run_dir: Path) -> Path:
         L += ["", "Leitura: momentum_reversao só usa a vela e deve dar igual nas duas colunas (checagem de justiça). "
               "gbm_cru com ticks x sem ticks responde se o dado detalhado acrescenta informação aos indicadores; "
               "dialeto com ticks x sem ticks, se o dialeto melhora com ele."]
-    p = run_dir / "comparacao.md"
+    p = run_dir / f"comparacao_w{wi:02d}.md"
     p.write_text("\n".join(L), encoding="utf-8")
     return p
 
@@ -144,6 +145,7 @@ def write_comparison(res: dict, base_path: Path, run_dir: Path) -> Path:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--window", type=int, default=0)
+    ap.add_argument("--windows", nargs="*", type=int, default=None, help="várias janelas (substitui --window)")
     ap.add_argument("--block", nargs=2, default=None, help="teste [início, fim) em UTC; padrão = bloco da janela")
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--device", default=None)
@@ -161,7 +163,10 @@ def main(argv=None) -> int:
         exp = _merge(exp, SMOKE)
         exp = _merge(exp, {"lm": {"max_steps": 40, "eval_every": 20}})
     exp["run_name"] = f"{base_run}_ticks" + ("_smoke" if args.smoke else "")
-    block = args.block or exp["walkforward"]["test_blocks"][args.window]
+    windows = args.windows or [args.window]
+    if args.block and len(windows) > 1:
+        ap.error("--block só com uma janela")
+    blocks = {w: (args.block or exp["walkforward"]["test_blocks"][w]) for w in windows}
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
     run_dir = PROJECT_ROOT / "runs" / exp["run_name"]
@@ -169,18 +174,20 @@ def main(argv=None) -> int:
     (run_dir / "experiment.yaml").write_text(yaml.safe_dump(exp, allow_unicode=True), encoding="utf-8")
     log = Logger(run_dir / "log.txt")
     gpu = torch.cuda.get_device_name(0) if device.startswith("cuda") else "CPU"
-    log(f"experimento tick a tick {exp['run_name']} | janela {args.window} | teste {block} | dispositivo: {gpu}")
+    log(f"experimento tick a tick {exp['run_name']} | janelas {windows} | dispositivo: {gpu}")
     np.random.seed(exp["seed"])
     torch.manual_seed(exp["seed"])
-    tl = load_timeline_ticks(cfg, exp, block, run_dir, log)
-    t0 = time.time()
-    res = run_window(args.window, block, tl, exp, run_dir, device, log)
-    log(f"janela {args.window} concluída em {(time.time() - t0) / 60:.1f} min")
-    write_report([res], exp, run_dir, args.smoke)
-    p = write_comparison(res, PROJECT_ROOT / "runs" / base_run / f"w{args.window:02d}" / "result.json", run_dir)
-    log(f"comparação: {p}")
+    last = max(blocks.values(), key=lambda b: pd.Timestamp(b[1]))
+    tl = load_timeline_ticks(cfg, exp, last, run_dir, log)   # linhas além do teste de cada janela não são usadas
+    for w in windows:
+        t0 = time.time()
+        res = run_window(w, blocks[w], tl, exp, run_dir, device, log)
+        log(f"janela {w} concluída em {(time.time() - t0) / 60:.1f} min")
+        p = write_comparison(res, PROJECT_ROOT / "runs" / base_run / f"w{w:02d}" / "result.json", run_dir, w)
+        log(f"comparação: {p}")
+        done = [json.loads(f.read_text(encoding="utf-8")) for f in sorted(run_dir.glob("w*/result.json"))]
+        write_report(done, exp, run_dir, args.smoke)
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
