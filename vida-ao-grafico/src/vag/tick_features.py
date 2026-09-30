@@ -88,6 +88,27 @@ def aggregate_ticks(files: list[Path], log=print) -> pd.DataFrame:
     return pd.DataFrame(red, index=pd.DatetimeIndex(idx, name="time"))[_SUM_COLS + ["max_qty"]]
 
 
+def feature_table(cfg: dict, symbol: str, log=print, rebuild: bool = False) -> pd.DataFrame:
+    """Features de ticks por minuto para todo o período com ticks baixados (cache em data/tick_features).
+    Colunas: time + TICK_FEATURES; minutos sem ticks ficam NaN."""
+    from .data.storage import read_symbol
+    out = cfg["data_dir"] / "tick_features" / f"{symbol}_m1.parquet"
+    if out.exists() and not rebuild:
+        return pd.read_parquet(out)
+    files = sorted((cfg["data_dir"] / "trades" / f"symbol={symbol}").glob("year=*/*.parquet"))
+    log(f"resumindo {len(files)} meses de ticks por minuto...")
+    agg = aggregate_ticks(files, log)
+    bars = read_symbol(cfg["data_dir"], "m1", symbol).sort_values("time").drop_duplicates("time").reset_index(drop=True)
+    bars = bars[bars["time"] <= agg.index[-1]].reset_index(drop=True)
+    f = compute_tick_features(bars, agg)
+    log(f"  conferência ticks x vela: {f.attrs['check']}")
+    f.insert(0, "time", pd.to_datetime(bars["time"], utc=True))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    f.to_parquet(out, compression="zstd")
+    log(f"  {len(f):,} minutos, {int(f[TICK_FEATURES].notna().all(axis=1).sum()):,} com todas as features -> {out}")
+    return f
+
+
 def compute_tick_features(bars: pd.DataFrame, agg: pd.DataFrame) -> pd.DataFrame:
     """bars: velas M1 (time, open, high, low, close). agg: saída de aggregate_ticks. Alinha pelas velas."""
     t = pd.DatetimeIndex(pd.to_datetime(bars["time"], utc=True)).as_unit("ns")

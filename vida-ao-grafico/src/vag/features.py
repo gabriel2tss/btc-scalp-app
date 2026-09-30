@@ -37,7 +37,8 @@ FEATURES = [
 def _roll_z(x: pd.Series, win: int) -> pd.Series:
     m = x.rolling(win, min_periods=win).mean()
     s = x.rolling(win, min_periods=win).std()
-    return (x - m) / s.replace(0, np.nan)
+    # série constante na janela (ex.: ouro, onde volume e nº de negócios são a mesma contagem de ticks) -> z = 0
+    return ((x - m) / s.replace(0, np.nan)).where(s != 0, 0.0)
 
 
 def _pos(close: pd.Series, high: pd.Series, low: pd.Series, win: int) -> pd.Series:

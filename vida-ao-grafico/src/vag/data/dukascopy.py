@@ -82,7 +82,7 @@ def _month_bounds(year: int, month: int, now: pd.Timestamp):
     return start, end
 
 
-def fetch_m1_month(symbol: str, year: int, month: int, now: pd.Timestamp, workers: int = 8) -> tuple[pd.DataFrame, dict]:
+def fetch_m1_month(symbol: str, year: int, month: int, now: pd.Timestamp, workers: int = 3) -> tuple[pd.DataFrame, dict]:
     """Velas M1 do mês: OHLC do bid + OHLC do ask + volumes. Minutos sem negociação são descartados."""
     scale = price_scale(symbol)
     start, end = _month_bounds(year, month, now)
